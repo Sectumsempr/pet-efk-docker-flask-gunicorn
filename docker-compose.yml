@@ -1,0 +1,79 @@
+version: '3'
+services:
+  app:
+    build: ./app
+    stop_signal: SIGKILL
+    restart: on-failure
+    command: gunicorn flask_app:app -c gunicorn.py --preload --log-config gunicorn_logging.conf
+    environment:
+      - SERVER_PORT:5000
+    ports:
+      - 5000:5000
+      - 80:80
+    depends_on:
+      - fluentd
+    volumes:
+      - ./app/flask_app.py:/var/server/app.py
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: gunicorn.access
+
+  fluentd:
+    build: ./fluentd
+    volumes:
+      - ./fluentd/conf:/fluentd/etc
+    links:
+      - "elasticsearch"
+    restart: always
+    container_name: fluentd
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    networks:
+      - network
+
+  elasticsearch:
+    image: amazon/opendistro-for-elasticsearch:latest
+    container_name: elasticsearch
+    environment:
+      - cluster.name=elasticsearch
+      - node.name=elasticsearch
+      - discovery.seed_hosts=elasticsearch
+      - cluster.initial_master_nodes=elasticsearch
+      - bootstrap.memory_lock=true # along with the memlock settings below, disables swapping
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m" # minimum and maximum Java heap size, recommend setting both to 50% of system RAM
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536 # maximum number of open files for the Elasticsearch user, set to at least 65536 on modern systems
+        hard: 65536
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+      - 9600:9600 # required for Performance Analyzer
+    networks:
+      - network
+
+  kibana:
+    image: amazon/opendistro-for-elasticsearch-kibana:latest
+    container_name: odfe-kibana
+    ports:
+      - 5601:5601
+    expose:
+      - "5601"
+    environment:
+      ELASTICSEARCH_URL: https://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: https://elasticsearch:9200
+    networks:
+      - network
+volumes:
+  elasticsearch:
+
+networks:
+  network:
+    driver: bridge
